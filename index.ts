@@ -442,7 +442,7 @@ export class Point {
    * Q = (1 / r)(sP - hG)
    * ```
    */
-  static fromSignature(msgHash: Hex, signature: Sig, recovery: number): Point {
+  static  fromSignature(msgHash: Hex, signature: Sig, recovery: number): Point {
     msgHash = ensureBytes(msgHash);
     const h = truncateHash(msgHash);
     const { r, s } = normalizeSignature(signature);
@@ -925,7 +925,7 @@ function isWithinCurveOrder(num: JSBI): boolean {
 }
 
 function isValidFieldElement(num: JSBI): boolean {
-  return _0n < num && num < CURVE.P;
+  return JSBI.lessThan(_0n, num) && JSBI.lessThan(num, CURVE.P);
 }
 
 /**
@@ -1068,7 +1068,7 @@ function bits2int(bytes: Uint8Array) {
 function bits2octets(bytes: Uint8Array): Uint8Array {
   const z1 = bits2int(bytes);
   const z2 = mod(z1, CURVE.n);
-  return int2octets(z2 < _0n ? z1 : z2);
+  return int2octets(JSBI.lessThan(z2, _0n) ? z1 : z2);
 }
 function int2octets(num: JSBI): Uint8Array {
   if (!(num instanceof JSBI)) throw new Error('Expected bigint');
