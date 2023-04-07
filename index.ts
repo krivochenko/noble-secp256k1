@@ -4,33 +4,32 @@
 // Uses built-in crypto module from node.js to generate randomness / hmac-sha256.
 // In browser the line is automatically removed during build time: uses crypto.subtle instead.
 import nodeCrypto from 'crypto';
-
-
+import JSBI from 'jsbi';
 
 // Be friendly to bad ECMAScript parsers by not using bigint literals like 123n
-const _0n = BigInt(0);
-const _1n = BigInt(1);
-const _2n = BigInt(2);
-const _3n = BigInt(3);
-const _8n = BigInt(8);
+const _0n = JSBI.BigInt(0);
+const _1n = JSBI.BigInt(1);
+const _2n = JSBI.BigInt(2);
+const _3n = JSBI.BigInt(3);
+const _8n = JSBI.BigInt(8);
 
 // Curve fomula is y² = x³ + ax + b
-const POW_2_256 = _2n ** BigInt(256);
+const POW_2_256 = JSBI.exponentiate(_2n, JSBI.BigInt(256));
 const CURVE = {
   // Params: a, b
   a: _0n,
-  b: BigInt(7),
+  b: JSBI.BigInt(7),
   // Field over which we'll do calculations
-  P: POW_2_256 - _2n ** BigInt(32) - BigInt(977),
+  P: JSBI.subtract(JSBI.subtract(POW_2_256, JSBI.exponentiate(_2n, JSBI.BigInt(32))), JSBI.BigInt(977)),
   // Curve order, a number of valid points in the field
-  n: POW_2_256 - BigInt('432420386565659656852420866394968145599'),
+  n: JSBI.subtract(POW_2_256, JSBI.BigInt('432420386565659656852420866394968145599')),
   // Cofactor. It's 1, so other subgroups don't exist, and default subgroup is prime-order
   h: _1n,
   // Base point (x, y) aka generator point
-  Gx: BigInt('55066263022277343669578718895168534326250603453777594175500187360389116729240'),
-  Gy: BigInt('32670510020758816978083085130507043184471273380659243275938904335757337482424'),
+  Gx: JSBI.BigInt('55066263022277343669578718895168534326250603453777594175500187360389116729240'),
+  Gy: JSBI.BigInt('32670510020758816978083085130507043184471273380659243275938904335757337482424'),
   // For endomorphism, see below
-  beta: BigInt('0x7ae96a2b657c07106e64479eac3434e99cf0497512f58995c1396c28719501ee'),
+  beta: JSBI.BigInt('0x7ae96a2b657c07106e64479eac3434e99cf0497512f58995c1396c28719501ee'),
 };
 
 // Cleaner js output if that's on a separate line.
@@ -40,17 +39,17 @@ export { CURVE };
  * y² = x³ + ax + b: Short weistrass curve formula
  * @returns y²
  */
-function weistrass(x: bigint): bigint {
+function weistrass(x: JSBI): JSBI {
   const { a, b } = CURVE;
-  const x2 = mod(x * x);
-  const x3 = mod(x2 * x);
-  return mod(x3 + a * x + b);
+  const x2 = mod(JSBI.multiply(x, x));
+  const x3 = mod(JSBI.multiply(x2, x));
+  return mod(JSBI.add(JSBI.add(x3, JSBI.multiply(a, x)), b));
 }
 
 // We accept hex strings besides Uint8Array for simplicity
 type Hex = Uint8Array | string;
 // Very few implementations accept numbers, we do it to ease learning curve
-type PrivKey = Hex | bigint | number;
+type PrivKey = Hex | JSBI | number;
 // 33/65-byte ECDSA key, or 32-byte Schnorr key - not interchangeable
 type PubKey = Hex | Point;
 // ECDSA signature
@@ -67,7 +66,7 @@ type Sig = Hex | Signature;
  * For affines cached multiplication, it trades off 1/2 init time & 1/3 ram for 20% perf hit.
  * https://gist.github.com/paulmillr/eb670806793e84df628a7c434a873066
  */
-const USE_ENDOMORPHISM = CURVE.a === _0n;
+const USE_ENDOMORPHISM = JSBI.equal(CURVE.a, _0n);
 
 /**
  * Jacobian Point works in 3d / jacobi coordinates: (x, y, z) ∋ (x=x/z², y=y/z³)
@@ -75,7 +74,7 @@ const USE_ENDOMORPHISM = CURVE.a === _0n;
  * We're doing calculations in jacobi, because its operations don't require costly inversion.
  */
 class JacobianPoint {
-  constructor(readonly x: bigint, readonly y: bigint, readonly z: bigint) {}
+  constructor(readonly x: JSBI, readonly y: JSBI, readonly z: JSBI) {}
 
   static readonly BASE = new JacobianPoint(CURVE.Gx, CURVE.Gy, _1n);
   static readonly ZERO = new JacobianPoint(_0n, _1n, _0n);
@@ -106,18 +105,18 @@ class JacobianPoint {
   equals(other: JacobianPoint): boolean {
     const a = this;
     const b = other;
-    const az2 = mod(a.z * a.z);
-    const az3 = mod(a.z * az2);
-    const bz2 = mod(b.z * b.z);
-    const bz3 = mod(b.z * bz2);
-    return mod(a.x * bz2) === mod(az2 * b.x) && mod(a.y * bz3) === mod(az3 * b.y);
+    const az2 = mod(JSBI.multiply(a.z, a.z));
+    const az3 = mod(JSBI.multiply(a.z, az2));
+    const bz2 = mod(JSBI.multiply(b.z, b.z));
+    const bz3 = mod(JSBI.multiply(b.z, bz2));
+    return JSBI.equal(mod(JSBI.multiply(a.x, bz2)), mod(JSBI.multiply(az2, b.x))) && JSBI.equal(mod(JSBI.multiply(a.y, bz3)), mod(JSBI.multiply(az3, b.y)));
   }
 
   /**
    * Flips point to one corresponding to (x, -y) in Affine coordinates.
    */
   negate(): JacobianPoint {
-    return new JacobianPoint(this.x, mod(-this.y), this.z);
+    return new JacobianPoint(this.x, mod(JSBI.unaryMinus(this.y)), this.z);
   }
 
   // Fast algo for doubling 2 Jacobian Points when curve's a=0.
@@ -128,15 +127,15 @@ class JacobianPoint {
     const X1 = this.x;
     const Y1 = this.y;
     const Z1 = this.z;
-    const A = mod(X1 ** _2n);
-    const B = mod(Y1 ** _2n);
-    const C = mod(B ** _2n);
-    const D = mod(_2n * (mod(mod((X1 + B) ** _2n)) - A - C));
-    const E = mod(_3n * A);
-    const F = mod(E ** _2n);
-    const X3 = mod(F - _2n * D);
-    const Y3 = mod(E * (D - X3) - _8n * C);
-    const Z3 = mod(_2n * Y1 * Z1);
+    const A = mod(JSBI.exponentiate(X1, _2n));
+    const B = mod(JSBI.exponentiate(Y1, _2n));
+    const C = mod(JSBI.exponentiate(B, _2n));
+    const D = mod(JSBI.multiply(_2n, JSBI.subtract(JSBI.subtract(mod(mod(JSBI.exponentiate(JSBI.add(X1, B), _2n))), A), C)));
+    const E = mod(JSBI.multiply(_3n, A));
+    const F = mod(JSBI.exponentiate(E, _2n));
+    const X3 = mod(JSBI.subtract(F, JSBI.multiply(_2n, D)));
+    const Y3 = mod(JSBI.subtract(JSBI.multiply(E, JSBI.subtract(D, X3)), JSBI.multiply(_8n, C)));
+    const Z3 = mod(JSBI.multiply(JSBI.multiply(_2n, Y1), Z1));
     return new JacobianPoint(X3, Y3, Z3);
   }
 
@@ -155,30 +154,30 @@ class JacobianPoint {
     const X2 = other.x;
     const Y2 = other.y;
     const Z2 = other.z;
-    if (X2 === _0n || Y2 === _0n) return this;
-    if (X1 === _0n || Y1 === _0n) return other;
-    const Z1Z1 = mod(Z1 ** _2n);
-    const Z2Z2 = mod(Z2 ** _2n);
-    const U1 = mod(X1 * Z2Z2);
-    const U2 = mod(X2 * Z1Z1);
-    const S1 = mod(Y1 * Z2 * Z2Z2);
-    const S2 = mod(mod(Y2 * Z1) * Z1Z1);
-    const H = mod(U2 - U1);
-    const r = mod(S2 - S1);
+    if (JSBI.equal(X2, _0n) || JSBI.equal(Y2, _0n)) return this;
+    if (JSBI.equal(X1, _0n) || JSBI.equal(Y1, _0n)) return other;
+    const Z1Z1 = mod(JSBI.exponentiate(Z1, _2n));
+    const Z2Z2 = mod(JSBI.exponentiate(Z2, _2n));
+    const U1 = mod(JSBI.multiply(X1, Z2Z2));
+    const U2 = mod(JSBI.multiply(X2, Z1Z1));
+    const S1 = mod(JSBI.multiply(JSBI.multiply(Y1, Z2), Z2Z2));
+    const S2 = mod(JSBI.multiply(mod(JSBI.multiply(Y2, Z1)), Z1Z1));
+    const H = mod(JSBI.subtract(U2, U1));
+    const r = mod(JSBI.subtract(S2, S1));
     // H = 0 meaning it's the same point.
-    if (H === _0n) {
-      if (r === _0n) {
+    if (JSBI.equal(H, _0n)) {
+      if (JSBI.equal(r, _0n)) {
         return this.double();
       } else {
         return JacobianPoint.ZERO;
       }
     }
-    const HH = mod(H ** _2n);
-    const HHH = mod(H * HH);
-    const V = mod(U1 * HH);
-    const X3 = mod(r ** _2n - HHH - _2n * V);
-    const Y3 = mod(r * (V - X3) - S1 * HHH);
-    const Z3 = mod(Z1 * Z2 * H);
+    const HH = mod(JSBI.exponentiate(H, _2n));
+    const HHH = mod(JSBI.multiply(H, HH));
+    const V = mod(JSBI.multiply(U1, HH));
+    const X3 = mod(JSBI.subtract(JSBI.subtract(JSBI.exponentiate(r, _2n), HHH), JSBI.multiply(_2n, V)));
+    const Y3 = mod(JSBI.subtract(JSBI.multiply(r, JSBI.subtract(V, X3)), JSBI.multiply(S1, HHH)));
+    const Z3 = mod(JSBI.multiply(JSBI.multiply(Z1, Z2), H));
     return new JacobianPoint(X3, Y3, Z3);
   }
 
@@ -191,16 +190,16 @@ class JacobianPoint {
    * It's faster, but should only be used when you don't care about
    * an exposed private key e.g. sig verification, which works over *public* keys.
    */
-  multiplyUnsafe(scalar: bigint): JacobianPoint {
+  multiplyUnsafe(scalar: JSBI): JacobianPoint {
     let n = normalizeScalar(scalar);
     // The condition is not executed unless you change global var
     if (!USE_ENDOMORPHISM) {
       let p = JacobianPoint.ZERO;
       let d: JacobianPoint = this;
-      while (n > _0n) {
-        if (n & _1n) p = p.add(d);
+      while (JSBI.greaterThan(n, _0n)) {
+        if (JSBI.bitwiseAnd(n, _1n)) p = p.add(d);
         d = d.double();
-        n >>= _1n;
+        n = JSBI.signedRightShift(n, _1n);
       }
       return p;
     }
@@ -208,16 +207,16 @@ class JacobianPoint {
     let k1p = JacobianPoint.ZERO;
     let k2p = JacobianPoint.ZERO;
     let d: JacobianPoint = this;
-    while (k1 > _0n || k2 > _0n) {
-      if (k1 & _1n) k1p = k1p.add(d);
-      if (k2 & _1n) k2p = k2p.add(d);
+    while (JSBI.greaterThan(k1, _0n) || JSBI.greaterThan(k2, _0n)) {
+      if (JSBI.bitwiseAnd(k1, _1n)) k1p = k1p.add(d);
+      if (JSBI.bitwiseAnd(k2, _1n)) k2p = k2p.add(d);
       d = d.double();
-      k1 >>= _1n;
-      k2 >>= _1n;
+      k1 = JSBI.signedRightShift(k1, _1n);
+      k2 = JSBI.signedRightShift(k2, _1n);
     }
     if (k1neg) k1p = k1p.negate();
     if (k2neg) k2p = k2p.negate();
-    k2p = new JacobianPoint(mod(k2p.x * CURVE.beta), k2p.y, k2p.z);
+    k2p = new JacobianPoint(mod(JSBI.multiply(k2p.x, CURVE.beta)), k2p.y, k2p.z);
     return k1p.add(k2p);
   }
 
@@ -251,7 +250,7 @@ class JacobianPoint {
    * @param affinePoint optional 2d point to save cached precompute windows on it.
    * @returns real and fake (for const-time) points
    */
-  private wNAF(n: bigint, affinePoint?: Point): { p: JacobianPoint; f: JacobianPoint } {
+  private wNAF(n: JSBI, affinePoint?: Point): { p: JacobianPoint; f: JacobianPoint } {
     if (!affinePoint && this.equals(JacobianPoint.BASE)) affinePoint = Point.BASE;
     const W = (affinePoint && affinePoint._WINDOW_SIZE) || 1;
     if (256 % W) {
@@ -274,24 +273,24 @@ class JacobianPoint {
 
     const windows = USE_ENDOMORPHISM ? 128 / W + 1 : 256 / W + 1;
     const windowSize = 2 ** (W - 1); // W=8 128
-    const mask = BigInt(2 ** W - 1); // Create mask with W ones: 0b11111111 for W=8
+    const mask = JSBI.BigInt(2 ** W - 1); // Create mask with W ones: 0b11111111 for W=8
     const maxNumber = 2 ** W; // W=8 256
-    const shiftBy = BigInt(W); // W=8 8
+    const shiftBy = JSBI.BigInt(W); // W=8 8
 
     // TODO: review this more carefully
     for (let window = 0; window < windows; window++) {
       const offset = window * windowSize;
       // Extract W bits.
-      let wbits = Number(n & mask);
+      let wbits = Number(JSBI.bitwiseAnd(n, mask).toString());
 
       // Shift number by W bits.
-      n >>= shiftBy;
+      n = JSBI.signedRightShift(n, shiftBy);
 
       // If the bits are bigger than max size, we'll split those.
       // +224 => 256 - 32
       if (wbits > windowSize) {
         wbits -= maxNumber;
-        n += _1n;
+        n = JSBI.add(n, _1n);
       }
 
       // Check if we're onto Zero point.
@@ -318,7 +317,7 @@ class JacobianPoint {
    * @param affinePoint optional point ot save cached precompute windows on it
    * @returns New point
    */
-  multiply(scalar: number | bigint, affinePoint?: Point): JacobianPoint {
+  multiply(scalar: number | JSBI, affinePoint?: Point): JacobianPoint {
     let n = normalizeScalar(scalar);
     // Real point.
     let point: JacobianPoint;
@@ -330,7 +329,7 @@ class JacobianPoint {
       let { p: k2p, f: f2p } = this.wNAF(k2, affinePoint);
       if (k1neg) k1p = k1p.negate();
       if (k2neg) k2p = k2p.negate();
-      k2p = new JacobianPoint(mod(k2p.x * CURVE.beta), k2p.y, k2p.z);
+      k2p = new JacobianPoint(mod(JSBI.multiply(k2p.x, CURVE.beta)), k2p.y, k2p.z);
       point = k1p.add(k2p);
       fake = f1p.add(f2p);
     } else {
@@ -345,10 +344,10 @@ class JacobianPoint {
   // Converts Jacobian point to affine (x, y) coordinates.
   // Can accept precomputed Z^-1 - for example, from invertBatch.
   // (x, y, z) ∋ (x=x/z², y=y/z³)
-  toAffine(invZ: bigint = invert(this.z)): Point {
-    const invZ2 = invZ ** _2n;
-    const x = mod(this.x * invZ2);
-    const y = mod(this.y * invZ2 * invZ);
+  toAffine(invZ: JSBI = invert(this.z)): Point {
+    const invZ2 = JSBI.exponentiate(invZ, _2n);
+    const x = mod(JSBI.multiply(this.x, invZ2));
+    const y = mod(JSBI.multiply(JSBI.multiply(this.y, invZ2), invZ));
     return new Point(x, y);
   }
 }
@@ -373,7 +372,7 @@ export class Point {
   // stores precomputed values. Usually only base point would be precomputed.
   _WINDOW_SIZE?: number;
 
-  constructor(readonly x: bigint, readonly y: bigint) {}
+  constructor(readonly x: JSBI, readonly y: JSBI) {}
 
   // "Private method", don't use it directly
   _setWindowSize(windowSize: number) {
@@ -392,14 +391,14 @@ export class Point {
     if (!isValidFieldElement(x)) throw new Error('Point is not on curve');
     const y2 = weistrass(x); // y² = x³ + ax + b
     let y = sqrtMod(y2); // y = y² ^ (p+1)/4
-    const isYOdd = (y & _1n) === _1n;
+    const isYOdd = JSBI.equal(JSBI.bitwiseAnd(y, _1n), _1n);
     if (isShort) {
       // Schnorr
-      if (isYOdd) y = mod(-y);
+      if (isYOdd) y = mod(JSBI.unaryMinus(y));
     } else {
       // ECDSA
       const isFirstByteOdd = (bytes[0] & 1) === 1;
-      if (isFirstByteOdd !== isYOdd) y = mod(-y);
+      if (isFirstByteOdd !== isYOdd) y = mod(JSBI.unaryMinus(y));
     }
     const point = new Point(x, y);
     point.assertValidity();
@@ -450,7 +449,7 @@ export class Point {
     if (recovery !== 0 && recovery !== 1) {
       throw new Error('Cannot recover signature: invalid recovery bit');
     }
-    if (h === _0n) throw new Error('Cannot recover signature: msgHash cannot be 0');
+    if (JSBI.equal(h, _0n)) throw new Error('Cannot recover signature: msgHash cannot be 0');
     const prefix = 2 + (recovery & 1);
     const P_ = Point.fromHex(`0${prefix}${numTo32bStr(r)}`);
     const sP = JacobianPoint.fromAffine(P_).multiplyUnsafe(s);
@@ -469,7 +468,7 @@ export class Point {
   toHex(isCompressed = false): string {
     const x = numTo32bStr(this.x);
     if (isCompressed) {
-      return `${this.y & _1n ? '03' : '02'}${x}`;
+      return `${JSBI.bitwiseAnd(this.y, _1n) ? '03' : '02'}${x}`;
     } else {
       return `04${x}${numTo32bStr(this.y)}`;
     }
@@ -489,18 +488,18 @@ export class Point {
     const msg = 'Point is not on elliptic curve';
     const { x, y } = this;
     if (!isValidFieldElement(x) || !isValidFieldElement(y)) throw new Error(msg);
-    const left = mod(y * y);
+    const left = mod(JSBI.multiply(y, y));
     const right = weistrass(x);
-    if (mod(left - right) !== _0n) throw new Error(msg);
+    if (JSBI.notEqual(mod(JSBI.subtract(left, right)), _0n)) throw new Error(msg);
   }
 
   equals(other: Point): boolean {
-    return this.x === other.x && this.y === other.y;
+    return JSBI.equal(this.x, other.x) && JSBI.equal(this.y, other.y);
   }
 
   // Returns the same point with inverted `y`
   negate() {
-    return new Point(this.x, mod(-this.y));
+    return new Point(this.x, mod(JSBI.unaryMinus(this.y)));
   }
 
   // Adds point to itself
@@ -518,7 +517,7 @@ export class Point {
     return this.add(other.negate());
   }
 
-  multiply(scalar: number | bigint) {
+  multiply(scalar: number | JSBI) {
     return JacobianPoint.fromAffine(this).multiply(scalar, this).toAffine();
   }
 }
@@ -562,7 +561,7 @@ function parseDERSignature(data: Uint8Array) {
 
 // Represents ECDSA signature with its (r, s) properties
 export class Signature {
-  constructor(readonly r: bigint, readonly s: bigint) {
+  constructor(readonly r: JSBI, readonly s: JSBI) {
     this.assertValidity();
   }
 
@@ -602,12 +601,12 @@ export class Signature {
   // We don't provide `hasHighR` for now even though some folks use it
   // https://github.com/bitcoin/bitcoin/pull/13666
   hasHighS(): boolean {
-    const HALF = CURVE.n >> _1n;
-    return this.s > HALF;
+    const HALF = JSBI.signedRightShift(CURVE.n, _1n);
+    return JSBI.greaterThan(this.s, HALF);
   }
 
   normalizeS(): Signature {
-    return this.hasHighS() ? new Signature(this.r, CURVE.n - this.s) : this;
+    return this.hasHighS() ? new Signature(this.r, JSBI.subtract(CURVE.n, this.s)) : this;
   }
 
   // DER-encoded
@@ -675,26 +674,26 @@ function bytesToHex(uint8a: Uint8Array): string {
   return hex;
 }
 
-function numTo32bStr(num: number | bigint): string {
-  if (num > POW_2_256) throw new Error('Expected number < 2^256');
+function numTo32bStr(num: JSBI): string {
+  if (JSBI.greaterThan(num, POW_2_256)) throw new Error('Expected number < 2^256');
   return num.toString(16).padStart(64, '0');
 }
 
-function numTo32b(num: bigint): Uint8Array {
+function numTo32b(num: JSBI): Uint8Array {
   return hexToBytes(numTo32bStr(num));
 }
 
-function numberToHex(num: number | bigint): string {
+function numberToHex(num: number | JSBI): string {
   const hex = num.toString(16);
   return hex.length & 1 ? `0${hex}` : hex;
 }
 
-function hexToNumber(hex: string): bigint {
+function hexToNumber(hex: string): JSBI {
   if (typeof hex !== 'string') {
     throw new TypeError('hexToNumber: expected string, got ' + typeof hex);
   }
   // Big Endian
-  return BigInt(`0x${hex}`);
+  return JSBI.BigInt(`0x${hex}`);
 }
 
 // Caching slows it down 2-3x
@@ -715,7 +714,7 @@ function hexToBytes(hex: string): Uint8Array {
 }
 
 // Big Endian
-function bytesToNumber(bytes: Uint8Array): bigint {
+function bytesToNumber(bytes: Uint8Array): JSBI {
   return hexToNumber(bytesToHex(bytes));
 }
 
@@ -725,27 +724,28 @@ function ensureBytes(hex: Hex): Uint8Array {
   return hex instanceof Uint8Array ? Uint8Array.from(hex) : hexToBytes(hex);
 }
 
-function normalizeScalar(num: number | bigint): bigint {
-  if (typeof num === 'number' && Number.isSafeInteger(num) && num > 0) return BigInt(num);
-  if (typeof num === 'bigint' && isWithinCurveOrder(num)) return num;
+function normalizeScalar(num: number | JSBI): JSBI {
+  if (typeof num === 'number' && Number.isSafeInteger(num) && num > 0) return JSBI.BigInt(num);
+  if (num instanceof JSBI  && isWithinCurveOrder(num)) return num;
   throw new TypeError('Expected valid private scalar: 0 < scalar < curve.n');
 }
 
 // -------------------------
 
 // Calculates a modulo b
-function mod(a: bigint, b: bigint = CURVE.P): bigint {
-  const result = a % b;
-  return result >= 0 ? result : b + result;
+function mod(a: JSBI, b: JSBI = CURVE.P): JSBI {
+  const result = JSBI.remainder(a, b);
+  return JSBI.greaterThanOrEqual(result, _0n) ? result : JSBI.add(b, result);
 }
 
 // Does x ^ (2 ^ power). E.g. 30 ^ (2 ^ 4)
-function pow2(x: bigint, power: bigint): bigint {
+function pow2(x: JSBI, power: JSBI): JSBI {
   const { P } = CURVE;
   let res = x;
-  while (power-- > _0n) {
-    res *= res;
-    res %= P;
+  power = JSBI.subtract(power, _1n);
+  while (JSBI.greaterThan(power, _0n)) {
+    res = JSBI.multiply(res, res);
+    res = JSBI.remainder(res, P);
   }
   return res;
 }
@@ -755,33 +755,33 @@ function pow2(x: bigint, power: bigint): bigint {
 // We are unwrapping the loop because it's 2x faster.
 // (P+1n/4n).toString(2) would produce bits [223x 1, 0, 22x 1, 4x 0, 11, 00]
 // We are multiplying it bit-by-bit
-function sqrtMod(x: bigint): bigint {
+function sqrtMod(x: JSBI): JSBI {
   const { P } = CURVE;
-  const _6n = BigInt(6);
-  const _11n = BigInt(11);
-  const _22n = BigInt(22);
-  const _23n = BigInt(23);
-  const _44n = BigInt(44);
-  const _88n = BigInt(88);
-  const b2 = (x * x * x) % P; // x^3, 11
-  const b3 = (b2 * b2 * x) % P; // x^7
-  const b6 = (pow2(b3, _3n) * b3) % P;
-  const b9 = (pow2(b6, _3n) * b3) % P;
-  const b11 = (pow2(b9, _2n) * b2) % P;
-  const b22 = (pow2(b11, _11n) * b11) % P;
-  const b44 = (pow2(b22, _22n) * b22) % P;
-  const b88 = (pow2(b44, _44n) * b44) % P;
-  const b176 = (pow2(b88, _88n) * b88) % P;
-  const b220 = (pow2(b176, _44n) * b44) % P;
-  const b223 = (pow2(b220, _3n) * b3) % P;
-  const t1 = (pow2(b223, _23n) * b22) % P;
-  const t2 = (pow2(t1, _6n) * b2) % P;
+  const _6n = JSBI.BigInt(6);
+  const _11n = JSBI.BigInt(11);
+  const _22n = JSBI.BigInt(22);
+  const _23n = JSBI.BigInt(23);
+  const _44n = JSBI.BigInt(44);
+  const _88n = JSBI.BigInt(88);
+  const b2 = JSBI.remainder(JSBI.exponentiate(x, _3n), P); // x^3, 11
+  const b3 = JSBI.remainder(JSBI.multiply(JSBI.multiply(b2, b2), x), P); // x^7
+  const b6 = JSBI.remainder(JSBI.multiply(pow2(b3, _3n), b3), P);
+  const b9 = JSBI.remainder(JSBI.multiply(pow2(b6, _3n), b3), P);
+  const b11 = JSBI.remainder(JSBI.multiply(pow2(b9, _2n), b2), P);
+  const b22 = JSBI.remainder(JSBI.multiply(pow2(b11, _11n), b11), P);
+  const b44 = JSBI.remainder(JSBI.multiply(pow2(b22, _22n), b22), P);
+  const b88 = JSBI.remainder(JSBI.multiply(pow2(b44, _44n), b44), P);
+  const b176 = JSBI.remainder(JSBI.multiply(pow2(b88, _88n), b88), P);
+  const b220 = JSBI.remainder(JSBI.multiply(pow2(b176, _44n), b44), P);
+  const b223 = JSBI.remainder(JSBI.multiply(pow2(b220, _3n), b3), P);
+  const t1 = JSBI.remainder(JSBI.multiply(pow2(b223, _23n), b22), P);
+  const t2 = JSBI.remainder(JSBI.multiply(pow2(t1, _6n), b2), P);
   return pow2(t2, _2n);
 }
 
 // Inverses number over modulo
-function invert(number: bigint, modulo: bigint = CURVE.P): bigint {
-  if (number === _0n || modulo <= _0n) {
+function invert(number: JSBI, modulo: JSBI = CURVE.P): JSBI {
+  if (JSBI.equal(number, _0n) || JSBI.lessThanOrEqual(modulo, _0n)) {
     throw new Error(`invert: expected positive integers, got n=${number} mod=${modulo}`);
   }
   // Eucledian GCD https://brilliant.org/wiki/extended-euclidean-algorithm/
@@ -789,69 +789,69 @@ function invert(number: bigint, modulo: bigint = CURVE.P): bigint {
   let b = modulo;
   // prettier-ignore
   let x = _0n, y = _1n, u = _1n, v = _0n;
-  while (a !== _0n) {
-    const q = b / a;
-    const r = b % a;
-    const m = x - u * q;
-    const n = y - v * q;
+  while (JSBI.notEqual(a, _0n)) {
+    const q = JSBI.divide(b, a);
+    const r = JSBI.remainder(b, a);
+    const m = JSBI.subtract(x, JSBI.multiply(u, q));
+    const n = JSBI.subtract(y, JSBI.multiply(v, q));
     // prettier-ignore
     b = a, a = r, x = u, y = v, u = m, v = n;
   }
   const gcd = b;
-  if (gcd !== _1n) throw new Error('invert: does not exist');
+  if (JSBI.equal(gcd, _1n)) throw new Error('invert: does not exist');
   return mod(x, modulo);
 }
 
 // Takes a bunch of numbers, inverses all of them
-function invertBatch(nums: bigint[], n: bigint = CURVE.P): bigint[] {
+function invertBatch(nums: JSBI[], n: JSBI = CURVE.P): JSBI[] {
   const len = nums.length;
   const scratch = new Array(len);
   let acc = _1n;
   for (let i = 0; i < len; i++) {
-    if (nums[i] === _0n) continue;
+    if (JSBI.equal(nums[i], _0n)) continue;
     scratch[i] = acc;
-    acc = mod(acc * nums[i], n);
+    acc = mod(JSBI.multiply(acc, nums[i]), n);
   }
   acc = invert(acc, n);
   for (let i = len - 1; i >= 0; i--) {
-    if (nums[i] === _0n) continue;
-    const tmp = mod(acc * nums[i], n);
-    nums[i] = mod(acc * scratch[i], n);
+    if (JSBI.equal(nums[i], _0n)) continue;
+    const tmp = mod(JSBI.multiply(acc, nums[i]), n);
+    nums[i] = mod(JSBI.multiply(acc, scratch[i]), n);
     acc = tmp;
   }
   return nums;
 }
 
-const divNearest = (a: bigint, b: bigint) => (a + b / _2n) / b;
-const POW_2_128 = _2n ** BigInt(128);
+const divNearest = (a: JSBI, b: JSBI) => JSBI.divide(JSBI.add(a, JSBI.divide(b, _2n)), b);
+const POW_2_128 = JSBI.exponentiate(_2n, JSBI.BigInt(128));
 // Split 256-bit K into 2 128-bit (k1, k2) for which k1 + k2 * lambda = K.
 // Used for endomorphism https://gist.github.com/paulmillr/eb670806793e84df628a7c434a873066
-function splitScalarEndo(k: bigint) {
+function splitScalarEndo(k: JSBI) {
   const { n } = CURVE;
-  const a1 = BigInt('0x3086d221a7d46bcde86c90e49284eb15');
-  const b1 = -_1n * BigInt('0xe4437ed6010e88286f547fa90abfe4c3');
-  const a2 = BigInt('0x114ca50f7a8e2f3f657c1108d9d44cfd8');
+  const a1 = JSBI.BigInt('0x3086d221a7d46bcde86c90e49284eb15');
+  const b1 = JSBI.multiply(JSBI.unaryMinus(_1n), JSBI.BigInt('0xe4437ed6010e88286f547fa90abfe4c3'));
+  const a2 = JSBI.BigInt('0x114ca50f7a8e2f3f657c1108d9d44cfd8');
   const b2 = a1;
-  const c1 = divNearest(b2 * k, n);
-  const c2 = divNearest(-b1 * k, n);
-  let k1 = mod(k - c1 * a1 - c2 * a2, n);
-  let k2 = mod(-c1 * b1 - c2 * b2, n);
-  const k1neg = k1 > POW_2_128;
-  const k2neg = k2 > POW_2_128;
-  if (k1neg) k1 = n - k1;
-  if (k2neg) k2 = n - k2;
-  if (k1 > POW_2_128 || k2 > POW_2_128) throw new Error('splitScalarEndo: Endomorphism failed');
+  const c1 = divNearest(JSBI.multiply(b2, k), n);
+  const c2 = divNearest(JSBI.multiply(JSBI.unaryMinus(b1), k), n);
+  let k1 = mod(JSBI.subtract(JSBI.subtract(k, JSBI.multiply(c1, a1)), JSBI.multiply(c2, a2)), n);
+  let k2 = mod(JSBI.subtract(JSBI.multiply(JSBI.unaryMinus(c1), b1), JSBI.multiply(c2, b2)), n);
+  const k1neg = JSBI.greaterThan(k1, POW_2_128);
+  const k2neg = JSBI.greaterThan(k2, POW_2_128);
+  if (k1neg) k1 = JSBI.subtract(n, k1);
+  if (k2neg) k2 = JSBI.subtract(n, k2);
+  if (JSBI.greaterThan(k1, POW_2_128) || JSBI.greaterThan(k2, POW_2_128)) throw new Error('splitScalarEndo: Endomorphism failed');
   return { k1neg, k1, k2neg, k2 };
 }
 
 // Ensures ECDSA message hashes are 32 bytes and < curve order
-function truncateHash(hash: Uint8Array): bigint {
+function truncateHash(hash: Uint8Array): JSBI {
   const { n } = CURVE;
   const byteLength = hash.length;
   const delta = byteLength * 8 - 256; // size of curve.n
   let h = bytesToNumber(hash);
-  if (delta > 0) h = h >> BigInt(delta);
-  if (h >= n) h -= n;
+  if (delta > 0) h = JSBI.signedRightShift(h, JSBI.BigInt(delta));
+  if (JSBI.greaterThanOrEqual(h, n)) h = JSBI.subtract(h, n);
   return h;
 }
 
@@ -920,11 +920,11 @@ class HmacDrbg {
   // whether bigints are removed even if you clean Uint8Arrays.
 }
 
-function isWithinCurveOrder(num: bigint): boolean {
-  return _0n < num && num < CURVE.n;
+function isWithinCurveOrder(num: JSBI): boolean {
+  return JSBI.lessThan(_0n, num) && JSBI.lessThan(num, CURVE.n);
 }
 
-function isValidFieldElement(num: bigint): boolean {
+function isValidFieldElement(num: JSBI): boolean {
   return _0n < num && num < CURVE.P;
 }
 
@@ -936,7 +936,7 @@ function isValidFieldElement(num: bigint): boolean {
  * @param d private key
  * @returns Signature with its point on curve Q OR undefined if params were invalid
  */
-function kmdToSig(kBytes: Uint8Array, m: bigint, d: bigint): RecoveredSig | undefined {
+function kmdToSig(kBytes: Uint8Array, m: JSBI, d: JSBI): RecoveredSig | undefined {
   const k = bytesToNumber(kBytes);
   if (!isWithinCurveOrder(k)) return;
   // Important: all mod() calls in the function must be done over `n`
@@ -944,21 +944,21 @@ function kmdToSig(kBytes: Uint8Array, m: bigint, d: bigint): RecoveredSig | unde
   const q = Point.BASE.multiply(k);
   // r = x mod n
   const r = mod(q.x, n);
-  if (r === _0n) return;
+  if (JSBI.equal(r, _0n)) return;
   // s = (1/k * (m + dr) mod n
-  const s = mod(invert(k, n) * mod(m + d * r, n), n);
-  if (s === _0n) return;
+  const s = mod(JSBI.multiply(invert(k, n), mod(JSBI.add(m, JSBI.multiply(d, r)), n)), n);
+  if (JSBI.equal(s, _0n)) return;
   const sig = new Signature(r, s);
-  const recovery = (q.x === sig.r ? 0 : 2) | Number(q.y & _1n);
+  const recovery = (JSBI.equal(q.x, sig.r) ? 0 : 2) | Number(JSBI.bitwiseAnd(q.y, _1n).toString());
   return { sig, recovery };
 }
 
-function normalizePrivateKey(key: PrivKey): bigint {
-  let num: bigint;
-  if (typeof key === 'bigint') {
+function normalizePrivateKey(key: PrivKey): JSBI {
+  let num: JSBI;
+  if (key instanceof JSBI) {
     num = key;
   } else if (typeof key === 'number' && Number.isSafeInteger(key) && key > 0) {
-    num = BigInt(key);
+    num = JSBI.BigInt(key);
   } else if (typeof key === 'string') {
     if (key.length !== 64) throw new Error('Expected 32 bytes of private key');
     num = hexToNumber(key);
@@ -1070,8 +1070,8 @@ function bits2octets(bytes: Uint8Array): Uint8Array {
   const z2 = mod(z1, CURVE.n);
   return int2octets(z2 < _0n ? z1 : z2);
 }
-function int2octets(num: bigint): Uint8Array {
-  if (typeof num !== 'bigint') throw new Error('Expected bigint');
+function int2octets(num: JSBI): Uint8Array {
+  if (!(num instanceof JSBI)) throw new Error('Expected bigint');
   const hex = numTo32bStr(num); // prohibits >32 bytes
   return hexToBytes(hex);
 }
@@ -1195,7 +1195,7 @@ export function verify(signature: Sig, msgHash: Hex, publicKey: PubKey, opts = v
   const h = truncateHash(msgHash);
 
   // Non-standard behavior: Probably forged, protect against fault attacks.
-  if (h === _0n) return false;
+  if (JSBI.equal(h, _0n)) return false;
   let pubKey;
   try {
     pubKey = JacobianPoint.fromAffine(normalizePublicKey(publicKey));
@@ -1204,37 +1204,37 @@ export function verify(signature: Sig, msgHash: Hex, publicKey: PubKey, opts = v
   }
   const { n } = CURVE;
   const s1 = invert(s, n); // s^-1
-  const u1 = mod(h * s1, n);
-  const u2 = mod(r * s1, n);
+  const u1 = mod(JSBI.multiply(h, s1), n);
+  const u2 = mod(JSBI.multiply(r, s1), n);
   const Ghs1 = JacobianPoint.BASE.multiply(u1);
   const Prs1 = pubKey.multiplyUnsafe(u2);
   const R = Ghs1.add(Prs1).toAffine();
   const v = mod(R.x, n);
-  return v === r;
+  return JSBI.equal(v, r);
 }
 
 // Schnorr-specific code as per BIP0340.
 
 // Strip first byte that signifies whether y is positive or negative, leave only x.
-async function taggedHash(tag: string, ...messages: Uint8Array[]): Promise<bigint> {
+async function taggedHash(tag: string, ...messages: Uint8Array[]): Promise<JSBI> {
   const tagB = new Uint8Array(tag.split('').map((c) => c.charCodeAt(0)));
   const tagH = await utils.sha256(tagB);
   const h = await utils.sha256(concatBytes(tagH, tagH, ...messages));
   return bytesToNumber(h);
 }
 
-async function createChallenge(x: bigint, P: Point, message: Uint8Array) {
+async function createChallenge(x: JSBI, P: Point, message: Uint8Array) {
   const rx = numTo32b(x);
   const t = await taggedHash('BIP0340/challenge', rx, P.toRawX(), message);
   return mod(t, CURVE.n);
 }
 
 function hasEvenY(point: Point) {
-  return mod(point.y, _2n) === _0n;
+  return JSBI.equal(mod(point.y, _2n), _0n);
 }
 
 class SchnorrSignature {
-  constructor(readonly r: bigint, readonly s: bigint) {
+  constructor(readonly r: JSBI, readonly s: JSBI) {
     if (!isValidFieldElement(r) || !isWithinCurveOrder(s)) throw new Error('Invalid signature');
   }
   static fromHex(hex: Hex) {
@@ -1273,20 +1273,20 @@ async function schnorrSign(
   if (rand.length !== 32) throw new TypeError('sign: Expected 32 bytes of aux randomness');
 
   const P = Point.fromPrivateKey(d0);
-  const d = hasEvenY(P) ? d0 : n - d0;
+  const d = hasEvenY(P) ? d0 : JSBI.subtract(n, d0);
 
   const t0h = await taggedHash('BIP0340/aux', rand);
-  const t = d ^ t0h;
+  const t = JSBI.bitwiseXor(d, t0h);
 
   const k0h = await taggedHash('BIP0340/nonce', numTo32b(t), P.toRawX(), m);
   const k0 = mod(k0h, n);
-  if (k0 === _0n) throw new Error('sign: Creation of signature failed. k is zero');
+  if (JSBI.equal(k0, _0n)) throw new Error('sign: Creation of signature failed. k is zero');
 
   // R = k'⋅G
   const R = Point.fromPrivateKey(k0);
-  const k = hasEvenY(R) ? k0 : n - k0;
+  const k = hasEvenY(R) ? k0 : JSBI.subtract(n, k0);
   const e = await createChallenge(R.x, P, m);
-  const sig = new SchnorrSignature(R.x, mod(k + e * d, n));
+  const sig = new SchnorrSignature(R.x, mod(JSBI.add(k, JSBI.multiply(e, d)), n));
   const isValid = await schnorrVerify(sig.toRawBytes(), m, P.toRawX());
 
   if (!isValid) throw new Error('sign: Invalid signature produced');
@@ -1309,7 +1309,7 @@ async function schnorrVerify(signature: Hex, message: Hex, publicKey: Hex): Prom
   const eP = P.multiply(e);
   const R = sG.subtract(eP);
 
-  if (R.equals(Point.BASE) || !hasEvenY(R) || R.x !== sig.r) return false;
+  if (R.equals(Point.BASE) || !hasEvenY(R) || JSBI.notEqual(R.x, sig.r)) return false;
   return true;
 }
 
@@ -1361,7 +1361,7 @@ export const utils = {
     while (i--) {
       const b32 = utils.randomBytes(32);
       const num = bytesToNumber(b32);
-      if (isWithinCurveOrder(num) && num !== _1n) return b32;
+      if (isWithinCurveOrder(num) && JSBI.notEqual(num, _1n)) return b32;
     }
     throw new Error('Valid private key was not found in 8 iterations. PRNG is broken');
   },
