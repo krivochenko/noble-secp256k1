@@ -2,12 +2,12 @@
   "compilerOptions": {
     "strict": true,
     "target": "es2020",
-    "module": "es6",
-    "moduleResolution": "node16",
+    "module": "commonjs",
     "noImplicitAny": true,
+    "removeComments": true,
     "preserveConstEnums": true,
     "resolveJsonModule": true
   },
-  "include": ["secp256k1.helpers.mts"],
+  "include": ["*.ts"],
   "exclude": ["node_modules"]
 }

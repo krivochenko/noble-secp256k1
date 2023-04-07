@@ -1,23 +1,20 @@
 {
   "name": "@noble/secp256k1",
-  "version": "2.0.0",
-  "description": "Fastest 4KB JS implementation of secp256k1 elliptic curve. Auditable, high-security, 0-dependency ECDH & ECDSA signatures compliant with RFC6979",
+  "version": "1.5.2",
+  "description": "Fastest JS implementation of secp256k1. Independently audited, high-security, 0-dependency ECDSA & Schnorr signatures",
   "files": [
-    "index.js",
-    "index.d.ts",
-    "index.ts"
+    "lib"
   ],
-  "type": "module",
-  "main": "index.js",
-  "module": "index.js",
-  "types": "index.d.ts",
+  "main": "lib/index.js",
+  "module": "lib/esm/index.js",
+  "types": "lib/index.d.ts",
   "scripts": {
-    "build": "tsc",
+    "build": "tsc -d && tsc -p tsconfig.esm.json",
     "build:release": "rollup -c rollup.config.js",
-    "test": "node test/secp256k1.test.mjs",
-    "bench": "node test/benchmark.js",
-    "min": "cd test/build; npm install; npm run terser",
-    "loc": "echo \"`npm run --silent min | wc -c` symbols `wc -l < index.ts` LOC, `npm run --silent min | gzip -c8 | wc -c`B gzipped\""
+    "lint": "prettier --print-width 100 --single-quote --check index.ts",
+    "test": "jest",
+    "coverage": "jest --coverage",
+    "bench": "node test/benchmark.js"
   },
   "author": "Paul Miller (https://paulmillr.com)",
   "homepage": "https://paulmillr.com/noble/",
@@ -26,31 +23,54 @@
     "url": "https://github.com/paulmillr/noble-secp256k1.git"
   },
   "license": "MIT",
+  "browser": {
+    "crypto": false
+  },
   "devDependencies": {
-    "@noble/hashes": "1.3.0",
-    "fast-check": "3.0.0",
-    "micro-bmark": "0.3.0",
-    "micro-should": "0.4.0",
-    "typescript": "5.0.2"
+    "@noble/hashes": "~1.0.0",
+    "@rollup/plugin-commonjs": "^21.0.0",
+    "@rollup/plugin-node-resolve": "^13.0.0",
+    "@types/jest": "^27",
+    "@types/node": "^16",
+    "fast-check": "^2.14.0",
+    "jest": "^27.4.5",
+    "micro-bmark": "^0.1.3",
+    "prettier": "^2.5.1",
+    "rollup": "^2.62.0",
+    "ts-jest": "^27.1.2",
+    "typescript": "4.5.4"
   },
   "keywords": [
     "secp256k1",
-    "rfc6979",
-    "signature",
-    "ecdsa",
-    "noble",
-    "cryptography",
+    "secp",
+    "secp256",
+    "elliptic",
     "elliptic curve",
-    "ecc",
     "curve",
+    "signature",
+    "ecc",
+    "rfc6979",
     "schnorr",
-    "bitcoin",
-    "ethereum"
+    "sig",
+    "bip0340",
+    "bip340",
+    "ecdsa",
+    "endomorphism",
+    "cryptography",
+    "security",
+    "noble"
   ],
   "exports": {
     ".": {
-      "types": "./index.d.ts",
-      "default": "./index.js"
+      "import": "./lib/esm/index.js",
+      "default": "./lib/index.js"
+    },
+    "./index.d.ts": "./lib/index.d.ts"
+  },
+  "jest": {
+    "testRegex": "/test/.*?\\.ts",
+    "transform": {
+      "^.+\\.ts$": "ts-jest"
     }
   },
   "funding": [
@@ -58,5 +78,8 @@
       "type": "individual",
       "url": "https://paulmillr.com/funding/"
     }
-  ]
+  ],
+  "dependencies": {
+    "jsbi": "^4.3.0"
+  }
 }
