@@ -79,8 +79,5 @@
       "type": "individual",
       "url": "https://paulmillr.com/funding/"
     }
-  ],
-  "dependencies": {
-    "jsbi": "^4.3.0"
-  }
+  ]
 }
